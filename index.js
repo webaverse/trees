@@ -55,7 +55,7 @@ const urlSpecs = {
     return `../procgen-assets/litter/ores/${u}`;
   }),
 };
-const urls = urlSpecs.trees.slice(0, 1)
+const litterUrls = urlSpecs.trees.slice(0, 1)
   .concat(urlSpecs.ores.slice(0, 1));
 
 //
@@ -314,18 +314,15 @@ export default e => {
   app.name = 'litter';
 
   const frameCbs = [];
-  // let live = true;
-  // let reactApp = null;
-  // let physicsIds = [];
   e.waitUntil((async () => {
-    await Promise.all(urls.map(async (u, index) => {
+    await Promise.all(litterUrls.map(async (u, index) => {
       const meshSize = 3;
       const _loadFullModel = async () => {
         const mesh = await metaversefile.createAppAsync({
           start_url: u,
         });
         mesh.position.y = 0.5;
-        mesh.position.x = (-urls.length / 2 + index) * meshSize;
+        mesh.position.x = (-litterUrls.length / 2 + index) * meshSize;
         mesh.scale.multiplyScalar(2);
 
         app.add(mesh);
@@ -346,7 +343,7 @@ export default e => {
         const treeMesh2 = await physics.meshoptSimplify(treeMesh, targetRatio, targetError);
         
         treeMesh2.position.y = 0.5;
-        treeMesh2.position.x = (-urls.length / 2 + index) * meshSize;
+        treeMesh2.position.x = (-litterUrls.length / 2 + index) * meshSize;
         treeMesh2.position.z += meshSize;
         treeMesh2.scale.multiplyScalar(2);
 
@@ -363,7 +360,7 @@ export default e => {
         const {
           result,
           numFrames,
-          frameSize,
+          // frameSize,
           numFramesPerRow,
           worldWidth,
           worldHeight,
@@ -399,7 +396,7 @@ export default e => {
           numSlots,
         });
         spritesheetMesh.position.y = 0.5;
-        spritesheetMesh.position.x = (-urls.length / 2 + index) * meshSize;
+        spritesheetMesh.position.x = (-litterUrls.length / 2 + index) * meshSize;
         spritesheetMesh.position.z += meshSize * 2;
         spritesheetMesh.scale.multiplyScalar(2);
         app.add(spritesheetMesh);
