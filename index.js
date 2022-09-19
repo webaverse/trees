@@ -22,23 +22,286 @@ function mod(a, n) {
 
 //
 
-const urls = [
-  `Tree_1_1.glb`,
-  `Tree_1_2.glb`,
-  `Tree_2_1.glb`,
-  `Tree_2_2.glb`,
-  `Tree_3_1.glb`,
-  `Tree_3_2.glb`,
-  `Tree_4_1.glb`,
-  `Tree_4_2.glb`,
-  `Tree_4_3.glb`,
-  `Tree_5_1.glb`,
-  `Tree_5_2.glb`,
-  `Tree_6_1.glb`,
-  `Tree_6_2.glb`,
-].map(u => {
-  return `../procgen-assets/vegetation/garden-trees/${u}`;
-});
+const urlSpecs = {
+  trees: [
+    `Tree_1_1.glb`,
+    `Tree_1_2.glb`,
+    `Tree_2_1.glb`,
+    `Tree_2_2.glb`,
+    `Tree_3_1.glb`,
+    `Tree_3_2.glb`,
+    `Tree_4_1.glb`,
+    `Tree_4_2.glb`,
+    `Tree_4_3.glb`,
+    `Tree_5_1.glb`,
+    `Tree_5_2.glb`,
+    `Tree_6_1.glb`,
+    `Tree_6_2.glb`,
+  ].map(u => {
+    return `../procgen-assets/vegetation/garden-trees/${u}`;
+  }),
+  ores: [
+    `BlueOre_deposit_low.glb`,
+    `Iron_Deposit_low.glb`,
+    `Ore_Blue_low.glb`,
+    `Ore_BrownRock_low.glb`,
+    `Ore_Deposit_Red.glb`,
+    `Ore_Red_low.glb`,
+    `Ore_metal_low.glb`,
+    `Ore_wood_low.glb`,
+    `Rock_ore_Deposit_low.glb`,
+    `TreeOre_low.glb`,
+  ].map(u => {
+    return `../procgen-assets/litter/ores/${u}`;
+  }),
+};
+const urls = urlSpecs.trees.slice(0, 1)
+  .concat(urlSpecs.ores.slice(0, 1));
+
+//
+
+class LitterLodMesh extends InstancedBatchedMesh {
+  constructor({
+    procGenInstance,
+    lodMeshes = [],
+    shapeAddresses = [],
+    physicsGeometries = [],
+    physics = null,
+  } = {}) {
+    // instancing
+    const {
+      atlasTextures,
+      geometries: lod0Geometries,
+    } = createTextureAtlas(lodMeshes.map(lods => lods[0]), {
+      textures: ['map', 'normalMap'],
+      attributes: ['position', 'normal', 'uv'],
+    });
+    // allocator
+
+    const allocator = new InstancedGeometryAllocator(lod0Geometries, [
+      {
+        name: 'p',
+        Type: Float32Array,
+        itemSize: 3,
+      },
+      {
+        name: 'q',
+        Type: Float32Array,
+        itemSize: 4,
+      },
+    ], {
+      maxInstancesPerDrawCall,
+      maxDrawCallsPerGeometry,
+      boundingType: 'box',
+    });
+    const {geometry, textures: attributeTextures} = allocator;
+    for (const k in attributeTextures) {
+      const texture = attributeTextures[k];
+      texture.anisotropy = maxAnisotropy;
+    }
+
+    // material
+
+    const material = new THREE.MeshStandardMaterial({
+      map: atlasTextures.map,
+      normalMap: atlasTextures.normalMap,
+      side: THREE.DoubleSide,
+      transparent: true,
+      alphaTest: 0.5,
+      onBeforeCompile: (shader) => {
+        shader.uniforms.pTexture = {
+          value: attributeTextures.p,
+          needsUpdate: true,
+        };
+        shader.uniforms.qTexture = {
+          value: attributeTextures.q,
+          needsUpdate: true,
+        };
+        
+        // vertex shader
+
+        shader.vertexShader = shader.vertexShader.replace(`#include <uv_pars_vertex>`, `\
+#undef USE_INSTANCING
+
+#include <uv_pars_vertex>
+
+uniform sampler2D pTexture;
+uniform sampler2D qTexture;
+
+vec3 rotate_vertex_position(vec3 position, vec4 q) { 
+  return position + 2.0 * cross(q.xyz, cross(q.xyz, position) + q.w * position);
+}
+        `);
+        shader.vertexShader = shader.vertexShader.replace(`#include <begin_vertex>`, `\
+#include <begin_vertex>
+
+int instanceIndex = gl_DrawID * ${maxInstancesPerDrawCall} + gl_InstanceID;
+const float width = ${attributeTextures.p.image.width.toFixed(8)};
+const float height = ${attributeTextures.p.image.height.toFixed(8)};
+float x = mod(float(instanceIndex), width);
+float y = floor(float(instanceIndex) / width);
+vec2 pUv = (vec2(x, y) + 0.5) / vec2(width, height);
+vec3 p = texture2D(pTexture, pUv).xyz;
+vec4 q = texture2D(qTexture, pUv).xyzw;
+
+// instance offset
+{
+  transformed = rotate_vertex_position(transformed, q);
+  transformed += p;
+}
+/* {
+  transformed.y += float(gl_DrawID) * 10.;
+  transformed.x += float(gl_InstanceID) * 10.;
+} */
+        `);
+        shader.fragmentShader = shader.fragmentShader.replace(`#include <uv_pars_fragment>`, `\
+#undef USE_INSTANCING
+
+#if ( defined( USE_UV ) && ! defined( UVS_VERTEX_ONLY ) )
+	varying vec2 vUv;
+#endif
+        `);
+
+        // fragment shader
+        
+        return shader;
+      },
+    });
+
+    // mesh
+
+    super(geometry, material, allocator);
+    this.frustumCulled = false;
+    
+    this.procGenInstance = procGenInstance;
+    this.meshes = lodMeshes;
+    this.shapeAddresses = shapeAddresses;
+    this.physicsGeometries = physicsGeometries;
+    this.physics = physics;
+    this.physicsObjects = [];
+
+    this.instanceObjects = new Map();
+  }
+
+  drawChunk(chunk, renderData, tracker){
+    const {
+      vegetationData,
+    } = renderData;
+    const localPhysicsObjects = [];
+    const _renderVegetationGeometry = (drawCall, ps, qs, index) => {
+      // geometry
+      const pTexture = drawCall.getTexture('p');
+      const pOffset = drawCall.getTextureOffset('p');
+      const qTexture = drawCall.getTexture('q');
+      const qOffset = drawCall.getTextureOffset('q');
+
+      const px = ps[index * 3];
+      const py = ps[index * 3 + 1];
+      const pz = ps[index * 3 + 2];
+      pTexture.image.data[pOffset] = px;
+      pTexture.image.data[pOffset + 1] = py;
+      pTexture.image.data[pOffset + 2] = pz;
+
+      const qx = qs[index * 4];
+      const qy = qs[index * 4 + 1];
+      const qz = qs[index * 4 + 2];
+      const qw = qs[index * 4 + 3];
+      qTexture.image.data[qOffset] = qx;
+      qTexture.image.data[qOffset + 1] = qy;
+      qTexture.image.data[qOffset + 2] = qz;
+      qTexture.image.data[qOffset + 3] = qw;
+
+      drawCall.updateTexture('p', pOffset, ps.length);
+      drawCall.updateTexture('q', qOffset, qs.length);
+
+      // physics
+      const shapeAddress = this.#getShapeAddress(drawCall.geometryIndex);
+      const physicsObject = this.#addPhysicsShape(shapeAddress, drawCall.geometryIndex, px, py, pz, qx, qy, qz, qw);
+      this.physicsObjects.push(physicsObject);
+      localPhysicsObjects.push(physicsObject);
+
+      drawCall.incrementInstanceCount();
+      
+      this.instanceObjects.set(physicsObject.physicsId, drawCall);
+      
+    };
+
+      
+    const drawcalls = [];
+    for (let i = 0; i < vegetationData.instances.length; i++) {
+      const geometryNoise = vegetationData.instances[i];
+      const geometryIndex = Math.floor(geometryNoise * this.meshes.length);
+      
+      localBox.setFromCenterAndSize(
+        localVector.set(
+          (chunk.min.x + 0.5) * chunkWorldSize,
+          (chunk.min.y + 0.5) * chunkWorldSize,
+          (chunk.min.z + 0.5) * chunkWorldSize
+        ),
+        localVector2.set(chunkWorldSize, chunkWorldSize * 256, chunkWorldSize)
+      );
+
+      let drawCall = this.allocator.allocDrawCall(geometryIndex, localBox);
+      drawcalls.push(drawCall);
+      _renderVegetationGeometry(drawCall, vegetationData.ps, vegetationData.qs, i);
+    }
+
+    const onchunkremove = () => {
+      drawcalls.forEach(drawcall => {
+        this.allocator.freeDrawCall(drawcall);
+      });
+      tracker.offChunkRemove(chunk, onchunkremove);
+
+      const firstLocalPhysicsObject = localPhysicsObjects[0];
+      const firstLocalPhysicsObjectIndex = this.physicsObjects.indexOf(firstLocalPhysicsObject);
+      this.physicsObjects.splice(firstLocalPhysicsObjectIndex, localPhysicsObjects.length);
+    };
+    tracker.onChunkRemove(chunk, onchunkremove);
+
+  }
+  
+  #getShapeAddress(geometryIndex) {
+    return this.shapeAddresses[geometryIndex];
+  }
+  #getShapeGeometry(geometryIndex){
+    return this.physicsGeometries[geometryIndex];
+  }
+  
+  #addPhysicsShape(shapeAddress, geometryIndex, px, py, pz, qx, qy, qz, qw) {    
+    localVector.set(px, py, pz);
+    localQuaternion.set(qx, qy, qz, qw);
+    localVector2.set(1, 1, 1);
+    localMatrix.compose(localVector, localQuaternion, localVector2)
+      .premultiply(this.matrixWorld)
+      .decompose(localVector, localQuaternion, localVector2);
+
+    // const matrixWorld = _getMatrixWorld(this.mesh, contentMesh, localMatrix, positionX, positionZ, rotationY);
+    // matrixWorld.decompose(localVector, localQuaternion, localVector2);
+    const position = localVector;
+    const quaternion = localQuaternion;
+    const scale = localVector2;
+    const dynamic = false;
+    const external = true;
+
+    const physicsGeometry = this.#getShapeGeometry(geometryIndex);
+    const physicsObject = this.physics.addConvexShape(shapeAddress, position, quaternion, scale, dynamic, external,physicsGeometry);
+  
+    this.physicsObjects.push(physicsObject);
+
+    return physicsObject;
+  }
+  
+  grabInstance(physicsId){
+    const phys = metaversefile.getPhysicsObjectByPhysicsId(physicsId);
+    this.physics.removeGeometry(phys);
+    const drawcall = this.instanceObjects.get(physicsId);
+    drawcall.decrementInstanceCount();
+
+  }
+  getPhysicsObjects() {
+    return this.physicsObjects;
+  }
+}
 
 //
 
@@ -46,20 +309,16 @@ export default e => {
   const app = useApp();
   const camera = useCamera();
   const physics = usePhysics();
-  const spriting = useSpriting();
-  const {SpritesheetMesh} = spriting;
+  const {createAppUrlSpriteSheet, SpritesheetMesh} = useSpriting();
 
-  app.name = 'trees';
+  app.name = 'litter';
 
-  let frameCb = null;
+  const frameCbs = [];
   // let live = true;
   // let reactApp = null;
   // let physicsIds = [];
   e.waitUntil((async () => {
-    // const u = `../procgen-assets/vegetation/garden-trees/garden-trees.glb`;
-    // const u = `../procgen-assets/vegetation/garden-trees/garden-trees_compressed.glb`;
-
-    await Promise.all(urls.slice(0, 1).map(async (u, index) => {
+    await Promise.all(urls.map(async (u, index) => {
       const meshSize = 3;
       const _loadFullModel = async () => {
         const mesh = await metaversefile.createAppAsync({
@@ -97,7 +356,7 @@ export default e => {
         return treeMesh2;
       };
       const _loadSpritesheet = async () => {
-        const spritesheet = await spriting.createAppUrlSpriteSheet(u, {
+        const spritesheet = await createAppUrlSpriteSheet(u, {
           // size: 2048,
           // numFrames: 8,
         });
@@ -147,7 +406,7 @@ export default e => {
         spritesheetMesh.updateMatrixWorld();
 
         // animate
-        frameCb = () => {
+        const frameCb = () => {
           localQuaternion.setFromRotationMatrix(
             localMatrix.lookAt(
               spritesheetMesh.getWorldPosition(localVector),
@@ -166,6 +425,7 @@ export default e => {
             mod(-localEuler.y + Math.PI/2 + (Math.PI * 2) / numAngles / 2, Math.PI * 2) / (Math.PI * 2);
           material.uniforms.uY.needsUpdate = true;
         };
+        frameCbs.push(frameCb);
       };
 
       await Promise.all([
@@ -178,7 +438,9 @@ export default e => {
   })());
 
   useFrame(() => {
-    frameCb && frameCb();
+    for (const frameCb of frameCbs) {
+      frameCb();
+    }
   });
 
   return app;
