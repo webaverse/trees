@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-// import easing from './easing.js';
 import metaversefile from 'metaversefile';
-// import physicsManager from '../physics-manager';
-const {useApp, useCamera, useFrame, usePhysics, useSpriting} = metaversefile;
+const {useApp, useCamera, useFrame, usePhysics, useAtlasing, useGeometryBatching, useSpriting} = metaversefile;
+const {createTextureAtlas} = useAtlasing();
+const {InstancedBatchedMesh, InstancedGeometryAllocator} = useGeometryBatching();
 
 // const baseUrl = import.meta.url.replace(/(\/)[^\/\\]*$/, '$1');
 
