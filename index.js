@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import metaversefile from 'metaversefile';
-const {useApp, useCamera, useFrame, usePhysics, useAtlasing, useGeometryBatching, useSpriting} = metaversefile;
+const {useApp, useCamera, useFrame, usePhysics, useGeometries, useAtlasing, useGeometryBatching, useSpriting} = metaversefile;
+const {DoubleSidedPlaneGeometry} = useGeometries();
 const {createTextureAtlas} = useAtlasing();
 const {InstancedBatchedMesh, InstancedGeometryAllocator} = useGeometryBatching();
 
@@ -60,7 +61,7 @@ const litterUrls = urlSpecs.trees.slice(0, 1)
 
 //
 
-class LitterMetaMesh extends InstancedBatchedMesh {
+class LitterPolygonMesh extends InstancedBatchedMesh {
   constructor({
     procGenInstance,
     lodMeshes = [],
@@ -302,6 +303,121 @@ vec4 q = texture2D(qTexture, pUv).xyzw;
     return this.physicsObjects;
   }
 }
+class LitterSpritesheetMesh extends THREE.Mesh {
+  constructor({
+    texture,
+    worldSize,
+    worldOffset,
+    numAngles,
+    numSlots,
+  }) {
+    const geometry = new DoubleSidedPlaneGeometry(worldSize, worldSize)
+      .translate(worldOffset[0], worldOffset[1], worldOffset[2]);
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTex: {
+          type: 't',
+          value: texture,
+          // needsUpdate: true,
+        },
+        uTime: {
+          type: 'f',
+          value: 0,
+          needsUpdate: true,
+        },
+        uY: {
+          type: 'f',
+          value: 0,
+          needsUpdate: true,
+        },
+      },
+      vertexShader: `\
+        precision highp float;
+        precision highp int;
+
+        // attribute vec3 barycentric;
+        attribute float ao;
+        attribute float skyLight;
+        attribute float torchLight;
+
+        // varying vec3 vViewPosition;
+        varying vec2 vUv;
+        varying vec3 vBarycentric;
+        varying float vAo;
+        varying float vSkyLight;
+        varying float vTorchLight;
+        varying vec3 vSelectColor;
+        varying vec2 vWorldUv;
+        varying vec3 vPos;
+        varying vec3 vNormal;
+
+        void main() {
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+
+          // vViewPosition = -mvPosition.xyz;
+          vUv = uv;
+        }
+      `,
+      fragmentShader: `\
+        precision highp float;
+        precision highp int;
+
+        #define PI 3.1415926535897932384626433832795
+
+        // uniform float sunIntensity;
+        uniform sampler2D uTex;
+        // uniform vec3 uColor;
+        uniform float uTime;
+        uniform float uY;
+        // uniform vec3 sunDirection;
+        // uniform float distanceOffset;
+        float parallaxScale = 0.3;
+        float parallaxMinLayers = 50.;
+        float parallaxMaxLayers = 50.;
+
+        // varying vec3 vViewPosition;
+        varying vec2 vUv;
+        varying vec3 vBarycentric;
+        varying float vAo;
+        varying float vSkyLight;
+        varying float vTorchLight;
+        varying vec3 vSelectColor;
+        varying vec2 vWorldUv;
+        varying vec3 vPos;
+        varying vec3 vNormal;
+
+        void main() {
+          float angleIndex = floor(uY * ${numAngles.toFixed(8)});
+          float i = angleIndex;
+          float x = mod(i, ${numSlots.toFixed(8)});
+          float y = (i - x) / ${numSlots.toFixed(8)};
+
+          gl_FragColor = texture(
+            uTex,
+            vec2(0., 1. - 1./${numSlots.toFixed(8)}) +
+              vec2(x, -y)/${numSlots.toFixed(8)} +
+              vec2(1.-vUv.x, 1.-vUv.y)/${numSlots.toFixed(8)}
+          );
+
+          const float alphaTest = 0.5;
+          if (gl_FragColor.a < alphaTest) {
+            discard;
+          }
+          gl_FragColor.a = 1.;
+          // gl_FragColor.r += 0.5;
+        }
+      `,
+      transparent: true,
+      // depthWrite: false,
+      // polygonOffset: true,
+      // polygonOffsetFactor: -2,
+      // polygonOffsetUnits: 1,
+      // side: THREE.DoubleSide,
+    });
+    super(geometry, material);
+  }
+}
 
 //
 
@@ -309,7 +425,7 @@ export default e => {
   const app = useApp();
   const camera = useCamera();
   const physics = usePhysics();
-  const {createAppUrlSpriteSheet, SpritesheetMesh} = useSpriting();
+  const {createAppUrlSpriteSheet} = useSpriting();
 
   app.name = 'litter';
 
@@ -388,7 +504,7 @@ export default e => {
         const numAngles = numFrames;
         const numSlots = numFramesPerRow;
         const worldSize = Math.max(worldWidth, worldHeight);
-        const spritesheetMesh = new SpritesheetMesh({
+        const spritesheetMesh = new LitterSpritesheetMesh({
           texture,
           worldSize,
           worldOffset,
