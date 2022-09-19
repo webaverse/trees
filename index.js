@@ -60,7 +60,7 @@ const litterUrls = urlSpecs.trees.slice(0, 1)
 
 //
 
-class LitterLodMesh extends InstancedBatchedMesh {
+class LitterMetaMesh extends InstancedBatchedMesh {
   constructor({
     procGenInstance,
     lodMeshes = [],
