@@ -1,92 +1,185 @@
 import * as THREE from 'three';
 // import easing from './easing.js';
 import metaversefile from 'metaversefile';
-import physicsManager from '../physics-manager';
-const {useApp, useFrame, useActivate, useLoaders, usePhysics, addTrackedApp, useDropManager, useDefaultModules, useCleanup} = metaversefile;
+// import physicsManager from '../physics-manager';
+const {useApp, useCamera, useFrame, usePhysics, useSpriting} = metaversefile;
 
 // const baseUrl = import.meta.url.replace(/(\/)[^\/\\]*$/, '$1');
 
+//
+
+const localVector = new THREE.Vector3();
+const localVector2 = new THREE.Vector3();
+const localQuaternion = new THREE.Quaternion();
+const localEuler = new THREE.Euler();
+const localMatrix = new THREE.Matrix4();
+
+//
+
+function mod(a, n) {
+  return ((a % n) + n) % n;
+}
+
+//
+
+const urls = [
+  `Tree_1_1.glb`,
+  `Tree_1_2.glb`,
+  `Tree_2_1.glb`,
+  `Tree_2_2.glb`,
+  `Tree_3_1.glb`,
+  `Tree_3_2.glb`,
+  `Tree_4_1.glb`,
+  `Tree_4_2.glb`,
+  `Tree_4_3.glb`,
+  `Tree_5_1.glb`,
+  `Tree_5_2.glb`,
+  `Tree_6_1.glb`,
+  `Tree_6_2.glb`,
+].map(u => {
+  return `../procgen-assets/vegetation/garden-trees/${u}`;
+});
+
+//
+
 export default e => {
   const app = useApp();
+  const camera = useCamera();
   const physics = usePhysics();
-  // const dropManager = useDropManager();
+  const spriting = useSpriting();
+  const {SpritesheetMesh} = spriting;
 
   app.name = 'trees';
 
-  /* let activateCb = null;
   let frameCb = null;
-  useActivate(() => {
-    activateCb && activateCb();
-  });
-  useFrame(() => {
-    frameCb && frameCb();
-  }); */
-
   // let live = true;
   // let reactApp = null;
   // let physicsIds = [];
   e.waitUntil((async () => {
-    const u = `../procgen-assets/vegetation/garden-trees/garden-trees.glb`;
+    // const u = `../procgen-assets/vegetation/garden-trees/garden-trees.glb`;
     // const u = `../procgen-assets/vegetation/garden-trees/garden-trees_compressed.glb`;
-    let o = await new Promise((accept, reject) => {
-      const {gltfLoader} = useLoaders();
-      gltfLoader.load(u, accept, function onprogress() {}, reject);
-    });
-    o = o.scene;
 
-    const meshes = [];
-    o.traverse(o => {
-      if (o.isMesh) {
-        meshes.push(o);
-      }
-    });
-    const meshSize = 3;
-    for (let i = 0; i < meshes.length; i++) {
-      const mesh = meshes[i];
-      mesh.position.x = (-meshes.length / 2 + i) * meshSize;
-      app.add(mesh);
-      mesh.updateMatrixWorld();
-    }
+    await Promise.all(urls.slice(0, 1).map(async (u, index) => {
+      const meshSize = 3;
+      const _loadFullModel = async () => {
+        const mesh = await metaversefile.createAppAsync({
+          start_url: u,
+        });
+        mesh.position.y = 0.5;
+        mesh.position.x = (-urls.length / 2 + index) * meshSize;
+        mesh.scale.multiplyScalar(2);
 
-    (async () => {
-      const treeMesh = meshes[0];
-      const targetRatio = 0.2;
-      const targetError = 0.1;
-      const treeMesh2 = await physics.meshoptSimplifySloppy(treeMesh, targetRatio, targetError);
-      treeMesh2.position.z += meshSize;
-      app.add(treeMesh2);
-      treeMesh2.updateMatrixWorld();
-    })();
+        app.add(mesh);
+        mesh.updateMatrixWorld();
+        
+        return mesh;
+      };
+      const _loadOptimizedModel = async mesh => {
+        let treeMesh = null;
+        mesh.traverse(o => {
+          if (treeMesh === null && o.isMesh) {
+            treeMesh = o;
+          }
+        });
 
-    /* if (!live) {
-      o.destroy();
-      return;
-    }
-    const {animations} = o;
-    o = o.scene;
-    app.add(o); */
+        const targetRatio = 0.2;
+        const targetError = 0.1;
+        const treeMesh2 = await physics.meshoptSimplify(treeMesh, targetRatio, targetError);
+        
+        treeMesh2.position.y = 0.5;
+        treeMesh2.position.x = (-urls.length / 2 + index) * meshSize;
+        treeMesh2.position.z += meshSize;
+        treeMesh2.scale.multiplyScalar(2);
 
-    //
+        app.add(treeMesh2);
+        treeMesh2.updateMatrixWorld();
+        
+        return treeMesh2;
+      };
+      const _loadSpritesheet = async () => {
+        const spritesheet = await spriting.createAppUrlSpriteSheet(u, {
+          // size: 2048,
+          // numFrames: 8,
+        });
+        const {
+          result,
+          numFrames,
+          frameSize,
+          numFramesPerRow,
+          worldWidth,
+          worldHeight,
+          worldOffset,
+        } = spritesheet;
 
-    /* const dropObject = new THREE.Object3D();
-    dropObject.position.y = 0.5;
-    app.add(dropObject); */
+        // console.log('got spritesheet', spritesheet);
 
-    // app.updateMatrixWorld();
+        /* const canvas = document.createElement('canvas');
+        canvas.width = result.width;
+        canvas.height = result.height;
+        canvas.style.cssText = `\
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 512px;
+          height: 512px;
+        `;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(result, 0, 0);
+        document.body.appendChild(canvas); */
 
-    /* let baseMesh = null;
-    o.traverse(o => {
-      if (!baseMesh && o.isMesh && /base_container/i.test(o.name)) {
-        baseMesh = o;
-      }
-    }); */
-    // const physicsId = physics.addGeometry(o);
-    // physicsIds.push(physicsId);
+        const texture = new THREE.Texture(result);
+        texture.needsUpdate = true;
+        const numAngles = numFrames;
+        const numSlots = numFramesPerRow;
+        const worldSize = Math.max(worldWidth, worldHeight);
+        const spritesheetMesh = new SpritesheetMesh({
+          texture,
+          worldSize,
+          worldOffset,
+          numAngles,
+          numSlots,
+        });
+        spritesheetMesh.position.y = 0.5;
+        spritesheetMesh.position.x = (-urls.length / 2 + index) * meshSize;
+        spritesheetMesh.position.z += meshSize * 2;
+        spritesheetMesh.scale.multiplyScalar(2);
+        app.add(spritesheetMesh);
+        spritesheetMesh.updateMatrixWorld();
+
+        // animate
+        frameCb = () => {
+          localQuaternion.setFromRotationMatrix(
+            localMatrix.lookAt(
+              spritesheetMesh.getWorldPosition(localVector),
+              camera.position,
+              localVector2.set(0, 1, 0)
+            )
+          );
+          localEuler.setFromQuaternion(localQuaternion, 'YXZ');
+          localEuler.x = 0;
+          localEuler.z = 0;
+          spritesheetMesh.quaternion.setFromEuler(localEuler);
+          spritesheetMesh.updateMatrixWorld();
+    
+          const {material} = spritesheetMesh;
+          material.uniforms.uY.value =
+            mod(-localEuler.y + Math.PI/2 + (Math.PI * 2) / numAngles / 2, Math.PI * 2) / (Math.PI * 2);
+          material.uniforms.uY.needsUpdate = true;
+        };
+      };
+
+      await Promise.all([
+        _loadFullModel().then(mesh => {
+          return _loadOptimizedModel(mesh);
+        }),
+        _loadSpritesheet(),
+      ]);
+    }));
   })());
-  
-  /* useCleanup(() => {
-    live = false;
-  }); */
+
+  useFrame(() => {
+    frameCb && frameCb();
+  });
 
   return app;
 };
